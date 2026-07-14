@@ -53,6 +53,17 @@
 
         <div id="lobby-start" class="card" hidden>
             <h2>Nouvelle partie</h2>
+            <label class="field-label">Mode de jeu</label>
+            <div class="pack-list">
+                <button type="button" class="pack mode-choice selected" data-mode="guess">
+                    <div class="pack-title"><i class="ic" data-icon="heart"></i> Tu me connais ?</div>
+                    <div class="pack-desc">Devinez les réponses de l'autre, avec score. Pour les couples qui se connaissent.</div>
+                </button>
+                <button type="button" class="pack mode-choice" data-mode="discover">
+                    <div class="pack-title"><i class="ic" data-icon="users"></i> Faire connaissance</div>
+                    <div class="pack-desc">Vous répondez tous les deux à la même question, puis vous découvrez vos réponses. Idéal quand on vient de se rencontrer.</div>
+                </button>
+            </div>
             <label class="field-label">Pack de questions</label>
             <div id="pack-list" class="pack-list"></div>
             <label class="field-label">Nombre de questions</label>
@@ -109,6 +120,9 @@
                     </div>
                 </div>
                 <p id="wait-validate" class="muted center-text" hidden><i class="ic" data-icon="eye"></i> En attente du verdict de ta moitié...</p>
+                <div id="next-zone" hidden>
+                    <button id="btn-next" class="btn primary"><i class="ic" data-icon="arrow"></i> Question suivante</button>
+                </div>
             </div>
         </div>
     </section>

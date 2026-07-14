@@ -17,6 +17,7 @@
     let state = null;        // dernier état reçu du serveur
     let viewKey = '';        // signature de l'affichage, pour ne pas écraser la saisie
     let activeTab = 'game';
+    let selectedMode = 'guess';
     let selectedPack = 'decouverte';
     let selectedRounds = 10;
     let lastRoundNum = null; // pour le toast de verdict
@@ -119,7 +120,7 @@
         const r = state.round || {};
         const d = state.daily || {};
         return [
-            activeTab, state.room.state,
+            activeTab, state.room.state, state.room.mode,
             state.partner ? state.partner.name : '',
             r.num, r.status, r.my_submitted, r.other_submitted, r.i_am_target,
             state.me.score, state.partner ? state.partner.score : '',
@@ -183,10 +184,21 @@
         $('lobby-start').hidden = !hasPartner;
         if (!hasPartner) return;
 
-        // Packs
+        document.querySelectorAll('.mode-choice').forEach((b) =>
+            b.classList.toggle('selected', b.dataset.mode === selectedMode));
+        renderPackList();
+    }
+
+    function renderPackList() {
+        const packs = selectedMode === 'discover'
+            ? (state.discover_packs || [])
+            : (state.packs || []);
+        if (!packs.some((p) => p.id === selectedPack)) {
+            selectedPack = packs.length ? packs[0].id : selectedPack;
+        }
         const list = $('pack-list');
         list.innerHTML = '';
-        (state.packs || []).forEach((p) => {
+        packs.forEach((p) => {
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'pack' + (p.id === selectedPack ? ' selected' : '');
@@ -211,11 +223,12 @@
     function renderScores() {
         if (!state || !state.partner) return;
         $('score-my-avatar').replaceChildren(Icons.el(GENDER_ICONS[state.me.gender] || 'heart'));
+        const discover = state.room.mode === 'discover';
         $('score-my-name').textContent = state.me.name;
-        $('score-my-val').textContent = state.me.score;
+        $('score-my-val').textContent = discover ? '' : state.me.score;
         $('score-partner-avatar').replaceChildren(Icons.el(GENDER_ICONS[state.partner.gender] || 'heart'));
         $('score-partner-name').textContent = state.partner.name;
-        $('score-partner-val').textContent = state.partner.score;
+        $('score-partner-val').textContent = discover ? '' : state.partner.score;
         if (state.round) {
             $('round-indicator').textContent = `Manche ${state.round.num}/${state.room.total_rounds}`;
             $('progress-fill').style.width =
@@ -228,7 +241,10 @@
         const r = state.round;
         if (!r) return;
 
-        if (r.i_am_target) {
+        const discover = state.room.mode === 'discover';
+        if (discover) {
+            setIconText($('round-role'), 'users', 'Répondez chacun pour vous, puis découvrez vos réponses !');
+        } else if (r.i_am_target) {
             setIconText($('round-role'), 'user', 'Question sur toi — réponds la vérité !');
         } else {
             setIconText($('round-role'), 'search', `Devine la réponse de ${r.target_name} !`);
@@ -244,8 +260,11 @@
             // Purge l'état de la manche précédente.
             $('validate-zone').hidden = true;
             $('wait-validate').hidden = true;
+            $('next-zone').hidden = true;
             if (!r.my_submitted) {
-                $('answer-input').placeholder = r.i_am_target ? 'Ta vraie réponse...' : 'Ta devinette...';
+                $('answer-input').placeholder = discover
+                    ? 'Ta réponse (pour toi-même)...'
+                    : (r.i_am_target ? 'Ta vraie réponse...' : 'Ta devinette...');
             } else {
                 $('waiting-text').textContent = `Réponse envoyée ! En attente de ${state.partner.name}...`;
             }
@@ -253,14 +272,25 @@
         }
 
         // Révélation
-        $('reveal-truth-label').textContent = `La vraie réponse de ${r.target_name}`;
-        $('reveal-truth').textContent = r.target_answer;
-        $('reveal-guess-label').textContent = r.i_am_target
-            ? `La devinette de ${state.partner.name}`
-            : 'Ta devinette';
-        $('reveal-guess').textContent = r.guess_answer;
-        $('validate-zone').hidden = !r.i_am_target;
-        $('wait-validate').hidden = r.i_am_target;
+        if (discover) {
+            $('reveal-truth-label').textContent = 'Ta réponse';
+            $('reveal-truth').textContent = r.my_answer;
+            $('reveal-guess-label').textContent = `La réponse de ${state.partner.name}`;
+            $('reveal-guess').textContent = r.partner_answer;
+            $('validate-zone').hidden = true;
+            $('wait-validate').hidden = true;
+            $('next-zone').hidden = false;
+        } else {
+            $('reveal-truth-label').textContent = `La vraie réponse de ${r.target_name}`;
+            $('reveal-truth').textContent = r.target_answer;
+            $('reveal-guess-label').textContent = r.i_am_target
+                ? `La devinette de ${state.partner.name}`
+                : 'Ta devinette';
+            $('reveal-guess').textContent = r.guess_answer;
+            $('validate-zone').hidden = !r.i_am_target;
+            $('wait-validate').hidden = r.i_am_target;
+            $('next-zone').hidden = true;
+        }
     }
 
     function renderEnd() {
@@ -268,6 +298,17 @@
         const my = state.me.score;
         const their = state.partner ? state.partner.score : 0;
         const total = state.room.total_rounds;
+
+        if (state.room.mode === 'discover') {
+            $('end-icon').replaceChildren(Icons.el('users'));
+            $('end-title').textContent = 'Vous vous connaissez un peu mieux !';
+            $('end-score').textContent =
+                `${total} questions partagées avec ${state.partner ? state.partner.name : 'ta moitié'}`;
+            document.querySelector('.compat').hidden = true;
+            renderDiscoverRecap();
+            return;
+        }
+        document.querySelector('.compat').hidden = false;
 
         if (my === their) {
             $('end-icon').replaceChildren(Icons.el('heart'));
@@ -311,6 +352,26 @@
             a.className = 'recap-a';
             a.textContent = `Vraie réponse : ${item.target_answer} · Devinette : ${item.guess_answer}`;
             div.append(q, a);
+            list.appendChild(div);
+        });
+    }
+
+    function renderDiscoverRecap() {
+        const list = $('recap-list');
+        list.innerHTML = '';
+        (state.recap || []).forEach((item) => {
+            const div = document.createElement('div');
+            div.className = 'recap-item';
+            const q = document.createElement('p');
+            q.className = 'recap-q';
+            q.textContent = `${item.num}. ${item.question}`;
+            const mine = document.createElement('p');
+            mine.className = 'recap-a';
+            mine.textContent = `Toi : ${item.my_answer}`;
+            const theirs = document.createElement('p');
+            theirs.className = 'recap-a';
+            theirs.textContent = `${state.partner ? state.partner.name : 'Ta moitié'} : ${item.partner_answer}`;
+            div.append(q, mine, theirs);
             list.appendChild(div);
         });
     }
@@ -427,7 +488,7 @@
     $('btn-start').addEventListener('click', () => doAction($('btn-start'), async () => {
         const useAi = state.ai_available && $('ai-toggle').checked;
         if (useAi) toast('L\'IA prépare vos questions...', 'sparkles');
-        await api('start', authBody({ pack: selectedPack, rounds: selectedRounds, ai: useAi }));
+        await api('start', authBody({ mode: selectedMode, pack: selectedPack, rounds: selectedRounds, ai: useAi }));
         lastRoundNum = null;
     }));
 
@@ -454,6 +515,23 @@
         await api('daily', authBody({ text }));
         $('daily-input').value = '';
     }));
+
+    document.querySelectorAll('.mode-choice').forEach((b) => {
+        b.addEventListener('click', () => {
+            if (selectedMode === b.dataset.mode) return;
+            selectedMode = b.dataset.mode;
+            document.querySelectorAll('.mode-choice').forEach((x) =>
+                x.classList.toggle('selected', x === b));
+            const packs = selectedMode === 'discover'
+                ? (state && state.discover_packs) || []
+                : (state && state.packs) || [];
+            selectedPack = packs.length ? packs[0].id : selectedPack;
+            if (state) renderPackList();
+        });
+    });
+
+    $('btn-next').addEventListener('click', () => doAction($('btn-next'), () =>
+        api('next', authBody())));
 
     document.querySelectorAll('.rounds-choice').forEach((b) => {
         b.addEventListener('click', () => {

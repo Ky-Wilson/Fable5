@@ -65,9 +65,39 @@ class QuestionsTest extends TestCase
         }
     }
 
-    public function test_piment_pack_exists_with_enough_questions(): void
+    public function test_every_pack_has_at_least_100_questions(): void
     {
-        $this->assertArrayHasKey('piment', Questions::PACKS);
-        $this->assertGreaterThanOrEqual(20, count(Questions::PACKS['piment']['questions']));
+        foreach (Questions::PACKS as $id => $pack) {
+            $this->assertGreaterThanOrEqual(100, count($pack['questions']), "Pack $id trop petit");
+            $this->assertSame(
+                count($pack['questions']),
+                count(array_unique($pack['questions'])),
+                "Doublons dans le pack $id"
+            );
+        }
+        foreach (Questions::DISCOVER_PACKS as $id => $pack) {
+            $this->assertGreaterThanOrEqual(100, count($pack['questions']), "Pack découverte $id trop petit");
+            $this->assertSame(
+                count($pack['questions']),
+                count(array_unique($pack['questions'])),
+                "Doublons dans le pack découverte $id"
+            );
+        }
+    }
+
+    public function test_every_discover_question_renders_without_leftover_tokens(): void
+    {
+        foreach (Questions::DISCOVER_PACKS as $packId => $pack) {
+            foreach ($pack['questions'] as $template) {
+                foreach (['m', 'f'] as $gender) {
+                    $rendered = Questions::render($template, '', $gender);
+                    $this->assertDoesNotMatchRegularExpression(
+                        '/[{}|]/',
+                        $rendered,
+                        "Jeton non résolu dans le pack découverte $packId : $template"
+                    );
+                }
+            }
+        }
     }
 }

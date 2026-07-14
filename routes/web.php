@@ -12,6 +12,7 @@ Route::prefix('api')->group(function () {
     Route::post('/start', [GameController::class, 'start']);
     Route::post('/answer', [GameController::class, 'answer']);
     Route::post('/validate', [GameController::class, 'validateGuess']);
+    Route::post('/next', [GameController::class, 'next']);
     Route::post('/replay', [GameController::class, 'replay']);
     Route::post('/daily', [GameController::class, 'dailyAnswer']);
 });

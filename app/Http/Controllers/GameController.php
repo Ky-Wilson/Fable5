@@ -75,6 +75,7 @@ class GameController extends Controller
             'room' => [
                 'code'         => $room->code,
                 'state'        => $room->state,
+                'mode'         => $room->mode,
                 'pack'         => $room->pack,
                 'ai'           => $room->ai,
                 'total_rounds' => $room->total_rounds,
@@ -83,10 +84,25 @@ class GameController extends Controller
             'partner' => $partner ? ['name' => $partner->name, 'gender' => $partner->gender, 'score' => $partner->score] : null,
             'ai_available' => $this->ai->enabled(),
             'packs' => Questions::packList(),
+            'discover_packs' => Questions::discoverPackList(),
         ];
 
         $round = $room->currentRound();
-        if ($round && $room->state === 'playing') {
+        if ($round && $room->state === 'playing' && $room->mode === 'discover') {
+            $mine = $me->num === 1 ? $round->target_answer : $round->guess_answer;
+            $theirs = $me->num === 1 ? $round->guess_answer : $round->target_answer;
+            $out['round'] = [
+                'num'             => $round->num,
+                'status'          => $round->status,
+                // Les accords suivent le sexe du lecteur.
+                'question'        => Questions::render($round->question, '', $me->gender),
+                'my_submitted'    => $mine !== null,
+                'other_submitted' => $theirs !== null,
+            ];
+            if ($round->status !== 'answering') {
+                $out['round'] += ['my_answer' => $mine, 'partner_answer' => $theirs];
+            }
+        } elseif ($round && $room->state === 'playing') {
             $iAmTarget = $me->num === $round->target_num;
             $target = $iAmTarget ? $me : $partner;
             $guesser = $iAmTarget ? $partner : $me;
@@ -118,7 +134,14 @@ class GameController extends Controller
             }
         }
 
-        if ($room->state === 'finished') {
+        if ($room->state === 'finished' && $room->mode === 'discover') {
+            $out['recap'] = $room->rounds()->orderBy('num')->get()->map(fn (Round $r) => [
+                'num'            => $r->num,
+                'question'       => Questions::render($r->question, '', $me->gender),
+                'my_answer'      => $me->num === 1 ? $r->target_answer : $r->guess_answer,
+                'partner_answer' => $me->num === 1 ? $r->guess_answer : $r->target_answer,
+            ])->all();
+        } elseif ($room->state === 'finished') {
             $out['recap'] = $room->rounds()->orderBy('num')->get()->map(function (Round $r) use ($me, $partner) {
                 $target = $me->num === $r->target_num ? $me : $partner;
                 $guesser = $me->num === $r->target_num ? $partner : $me;
@@ -177,25 +200,28 @@ class GameController extends Controller
             return response()->json(['ok' => true]); // L'autre a déjà lancé.
         }
 
-        $pack = (string) $request->input('pack', 'decouverte');
-        if (! isset(Questions::PACKS[$pack])) {
-            $pack = 'decouverte';
+        $mode = $request->input('mode') === 'discover' ? 'discover' : 'guess';
+        $bank = $mode === 'discover' ? Questions::DISCOVER_PACKS : Questions::PACKS;
+        $pack = (string) $request->input('pack', '');
+        if (! isset($bank[$pack])) {
+            $pack = array_key_first($bank);
         }
         $total = min(20, max(4, (int) $request->input('rounds', 10)));
 
         $questions = null;
         $aiUsed = false;
         if ($request->boolean('ai')) {
-            $questions = $this->ai->generateQuestions($pack, $total);
+            $questions = $this->ai->generateQuestions($pack, $total, $mode);
             $aiUsed = $questions !== null;
         }
-        $questions ??= Questions::pick($pack, $total);
+        $questions ??= Questions::pick($pack, $total, $mode);
 
-        DB::transaction(function () use ($room, $pack, $aiUsed, $questions) {
+        DB::transaction(function () use ($room, $mode, $pack, $aiUsed, $questions) {
             $room->rounds()->delete();
             $room->players()->update(['score' => 0]);
             $room->update([
                 'state'        => 'playing',
+                'mode'         => $mode,
                 'pack'         => $pack,
                 'ai'           => $aiUsed,
                 'total_rounds' => count($questions),
@@ -204,7 +230,8 @@ class GameController extends Controller
             $room->rounds()->create([
                 'num'        => 1,
                 'question'   => $questions[0],
-                'target_num' => random_int(1, 2),
+                // En mode découverte il n'y a pas de joueur « cible ».
+                'target_num' => $mode === 'discover' ? 0 : random_int(1, 2),
             ]);
         });
 
@@ -222,7 +249,11 @@ class GameController extends Controller
             return $this->fail('not_answering');
         }
 
-        $col = $me->num === $round->target_num ? 'target_answer' : 'guess_answer';
+        // En mode découverte, chacun répond pour soi : joueur 1 → target_answer,
+        // joueur 2 → guess_answer. En mode devinettes, selon le rôle.
+        $col = $room->mode === 'discover'
+            ? ($me->num === 1 ? 'target_answer' : 'guess_answer')
+            : ($me->num === $round->target_num ? 'target_answer' : 'guess_answer');
         if ($round->{$col} !== null) {
             return response()->json(['ok' => true]); // Double envoi : sans effet.
         }
@@ -242,6 +273,9 @@ class GameController extends Controller
     public function validateGuess(Request $request): JsonResponse
     {
         [$room, $me, $partner] = $this->auth($request);
+        if ($room->mode !== 'guess') {
+            return $this->fail('wrong_mode');
+        }
 
         $round = $room->currentRound();
         if (! $round || $round->status !== 'reveal') {
@@ -269,6 +303,38 @@ class GameController extends Controller
                 'num'        => $round->num + 1,
                 'question'   => $questions[$round->num] ?? $questions[array_rand($questions)],
                 'target_num' => $round->target_num === 1 ? 2 : 1,
+            ]);
+        });
+
+        return response()->json(['ok' => true]);
+    }
+
+    /** Mode découverte : passe à la question suivante après la révélation. */
+    public function next(Request $request): JsonResponse
+    {
+        [$room] = $this->auth($request);
+        if ($room->mode !== 'discover') {
+            return $this->fail('wrong_mode');
+        }
+
+        $round = $room->currentRound();
+        if (! $round || $round->status !== 'reveal') {
+            return response()->json(['ok' => true]); // Déjà avancé par l'autre.
+        }
+
+        DB::transaction(function () use ($room, $round) {
+            $round->update(['status' => 'done']);
+
+            if ($round->num >= $room->total_rounds) {
+                $room->update(['state' => 'finished']);
+
+                return;
+            }
+            $questions = $room->questions ?? [];
+            $room->rounds()->create([
+                'num'        => $round->num + 1,
+                'question'   => $questions[$round->num] ?? $questions[array_rand($questions)],
+                'target_num' => 0,
             ]);
         });
 

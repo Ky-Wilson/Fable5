@@ -131,6 +131,53 @@ class GameFlowTest extends TestCase
         $this->assertNotSame($targets[1], $targets[2]);
     }
 
+    public function test_discover_mode_full_flow(): void
+    {
+        $c = $this->createCouple();
+
+        $this->postJson('/api/start', [
+            'code' => $c['code'], 'token' => $c['t1'],
+            'mode' => 'discover', 'pack' => 'premiers_pas', 'rounds' => 4,
+        ])->assertOk();
+
+        $state = $this->postJson('/api/state', ['code' => $c['code'], 'token' => $c['t1']])->json();
+        $this->assertSame('discover', $state['room']['mode']);
+        $this->assertArrayNotHasKey('i_am_target', $state['round']);
+
+        for ($i = 1; $i <= 4; $i++) {
+            // La validation de devinette n'existe pas dans ce mode.
+            $this->postJson('/api/validate', ['code' => $c['code'], 'token' => $c['t1'], 'correct' => true])
+                ->assertStatus(400)->assertJson(['error' => 'wrong_mode']);
+
+            $this->postJson('/api/answer', ['code' => $c['code'], 'token' => $c['t1'], 'text' => "Alice $i"])->assertOk();
+
+            // Rien n'est dévoilé avant la seconde réponse.
+            $bob = $this->postJson('/api/state', ['code' => $c['code'], 'token' => $c['t2']])->json();
+            $this->assertArrayNotHasKey('partner_answer', $bob['round']);
+            $this->assertTrue($bob['round']['other_submitted']);
+
+            $this->postJson('/api/answer', ['code' => $c['code'], 'token' => $c['t2'], 'text' => "Bob $i"])->assertOk();
+
+            // Révélation : chacun voit sa réponse et celle de l'autre.
+            $alice = $this->postJson('/api/state', ['code' => $c['code'], 'token' => $c['t1']])->json();
+            $this->assertSame('reveal', $alice['round']['status']);
+            $this->assertSame("Alice $i", $alice['round']['my_answer']);
+            $this->assertSame("Bob $i", $alice['round']['partner_answer']);
+
+            // N'importe lequel des deux enchaîne (double clic sans effet).
+            $this->postJson('/api/next', ['code' => $c['code'], 'token' => $c['t2']])->assertOk();
+            $this->postJson('/api/next', ['code' => $c['code'], 'token' => $c['t1']])->assertOk();
+        }
+
+        $state = $this->postJson('/api/state', ['code' => $c['code'], 'token' => $c['t2']])->json();
+        $this->assertSame('finished', $state['room']['state']);
+        $this->assertCount(4, $state['recap']);
+        $this->assertSame('Bob 1', $state['recap'][0]['my_answer']);
+        $this->assertSame('Alice 1', $state['recap'][0]['partner_answer']);
+        // Pas de score en mode découverte.
+        $this->assertSame(0, $state['me']['score']);
+    }
+
     public function test_daily_question_stays_hidden_until_both_answer(): void
     {
         $c = $this->createCouple();

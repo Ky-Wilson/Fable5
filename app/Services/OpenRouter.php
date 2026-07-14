@@ -23,32 +23,47 @@ class OpenRouter
      *
      * @return list<string>|null Questions contenant {name}, ou null si échec.
      */
-    public function generateQuestions(string $pack, int $n): ?array
+    public function generateQuestions(string $pack, int $n, string $mode = 'guess'): ?array
     {
         if (! $this->enabled()) {
             return null;
         }
 
         $styles = [
-            'decouverte' => 'découverte : goûts, souvenirs, habitudes, rêves et personnalité',
-            'fun'        => 'humour : questions drôles, absurdes ou décalées',
-            'romantique' => 'romantique : souvenirs du couple, tendresse, projets à deux',
-            'coquin'     => 'coquin et suggestif, de bon goût : séduction, complicité, charme (sous-entendus, jamais vulgaire)',
-            'piment'     => 'pimenté pour un couple adulte : désirs, fantasmes, jeux amoureux — sensuel et direct sans être graphique ni vulgaire',
+            'decouverte'   => 'découverte : goûts, souvenirs, habitudes, rêves et personnalité',
+            'fun'          => 'humour : questions drôles, absurdes ou décalées',
+            'romantique'   => 'romantique : souvenirs du couple, tendresse, projets à deux',
+            'coquin'       => 'coquin et suggestif, de bon goût : séduction, complicité, charme (sous-entendus, jamais vulgaire)',
+            'piment'       => 'pimenté pour un couple adulte : désirs, fantasmes, jeux amoureux — sensuel et direct sans être graphique ni vulgaire',
+            'premiers_pas' => 'brise-glace léger : goûts, quotidien, préférences simples',
+            'plus_perso'   => 'plus profond : valeurs, rêves, émotions, histoires de vie',
+            'flirt'        => 'flirt léger : séduction, compliments, premiers rendez-vous',
         ];
         $style = $styles[$pack] ?? $styles['decouverte'];
 
-        $prompt = "Tu écris des questions pour un jeu de couple à distance nommé « Tu me connais ? ». "
-            ."Un des deux partenaires répond à une question qui le concerne, l'autre devine sa réponse.\n"
-            ."Génère exactement $n questions en français, style $style.\n"
-            ."Règles :\n"
-            .'- Chaque question parle du partenaire visé en utilisant littéralement le texte {name} à la place de son prénom '
-            ."(exemple : \"Quel est le plat préféré de {name} ?\").\n"
-            .'- Pour les mots qui s\'accordent en genre, utilise la syntaxe {masculin|féminin} pour la personne visée '
-            .'(exemple : "Quel parfum rend {name} {fou|folle} ?") et {p:masculin|féminin} pour son ou sa partenaire.'."\n"
-            ."- Une seule phrase par question.\n"
-            ."- Questions variées, originales, réponse courte possible.\n"
-            .'Réponds UNIQUEMENT avec un tableau JSON de chaînes, sans texte autour.';
+        if ($mode === 'discover') {
+            $prompt = 'Tu écris des questions pour un jeu où deux personnes qui viennent de se rencontrer '
+                ."répondent chacune à la même question sur elles-mêmes, puis découvrent leurs réponses.\n"
+                ."Génère exactement $n questions en français, style $style.\n"
+                ."Règles :\n"
+                ."- Questions à la deuxième personne (tutoiement), qui s'adressent aux deux joueurs à la fois.\n"
+                .'- Pour les mots qui s\'accordent en genre, utilise la syntaxe {masculin|féminin} '
+                .'(exemple : "Qu\'est-ce qui te rend {heureux|heureuse} ?").'."\n"
+                ."- Une seule phrase par question, réponse courte possible, questions variées et originales.\n"
+                .'Réponds UNIQUEMENT avec un tableau JSON de chaînes, sans texte autour.';
+        } else {
+            $prompt = "Tu écris des questions pour un jeu de couple à distance nommé « Tu me connais ? ». "
+                ."Un des deux partenaires répond à une question qui le concerne, l'autre devine sa réponse.\n"
+                ."Génère exactement $n questions en français, style $style.\n"
+                ."Règles :\n"
+                .'- Chaque question parle du partenaire visé en utilisant littéralement le texte {name} à la place de son prénom '
+                ."(exemple : \"Quel est le plat préféré de {name} ?\").\n"
+                .'- Pour les mots qui s\'accordent en genre, utilise la syntaxe {masculin|féminin} pour la personne visée '
+                .'(exemple : "Quel parfum rend {name} {fou|folle} ?") et {p:masculin|féminin} pour son ou sa partenaire.'."\n"
+                ."- Une seule phrase par question.\n"
+                ."- Questions variées, originales, réponse courte possible.\n"
+                .'Réponds UNIQUEMENT avec un tableau JSON de chaînes, sans texte autour.';
+        }
 
         $models = array_merge(
             [config('services.openrouter.model')],
@@ -56,7 +71,7 @@ class OpenRouter
         );
 
         foreach ($models as $model) {
-            $questions = $this->call($model, $prompt, $n);
+            $questions = $this->call($model, $prompt, $n, requireName: $mode !== 'discover');
             if ($questions !== null) {
                 return $questions;
             }
@@ -66,7 +81,7 @@ class OpenRouter
     }
 
     /** @return list<string>|null */
-    private function call(string $model, string $prompt, int $n): ?array
+    private function call(string $model, string $prompt, int $n, bool $requireName = true): ?array
     {
         try {
             $response = Http::withToken(config('services.openrouter.key'))
@@ -108,7 +123,8 @@ class OpenRouter
 
         $questions = [];
         foreach ($list as $q) {
-            if (is_string($q) && str_contains($q, '{name}') && mb_strlen($q) <= 300) {
+            if (is_string($q) && mb_strlen($q) <= 300
+                && (! $requireName || str_contains($q, '{name}'))) {
                 $questions[] = trim($q);
             }
         }

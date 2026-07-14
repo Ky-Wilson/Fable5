@@ -12,6 +12,7 @@ return new class extends Migration
             $table->id();
             $table->string('code', 10)->unique();
             $table->string('state', 20)->default('lobby'); // lobby | playing | finished
+            $table->string('mode', 20)->default('guess');  // guess (devinettes) | discover (faire connaissance)
             $table->string('pack', 30)->nullable();
             $table->boolean('ai')->default(false);
             $table->unsignedTinyInteger('total_rounds')->default(10);
